@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -11,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/konfortes/go-server-utils/logging"
 	"github.com/konfortes/go-server-utils/server"
 	"github.com/konfortes/go-server-utils/utils"
 	"github.com/opentracing/opentracing-go"
@@ -21,11 +22,13 @@ type appConfig struct {
 	handleTimeMs int
 	errorRate    int
 	forwardTo    []string
+	callParallel bool
 }
 
 func (ac *appConfig) load() {
 	ac.handleTimeMs, _ = strconv.Atoi(utils.GetEnvOr("HANDLE_TIME", "100"))
 	ac.errorRate, _ = strconv.Atoi(utils.GetEnvOr("ERROR_RATE", "0"))
+	ac.callParallel = utils.GetEnvOr("CALL_PARALLEL", "false") == "true"
 
 	forwardSlice := strings.Split(utils.GetEnvOr("FORWARD_TO", ""), ",")
 	for _, url := range forwardSlice {
@@ -66,62 +69,105 @@ func main() {
 func handlers() []server.Handler {
 	return []server.Handler{
 		{Method: http.MethodGet, Pattern: "/", H: func(c *gin.Context) {
-			logger := logging.Logger(c.Request.Context())
-			logger.Info("Got request")
-			logger.Infof("Handle time of %d ms", config.handleTimeMs)
-			logger.Infof("error rate of %d", config.errorRate)
-
-			rand.Seed(time.Now().UnixNano())
-			errorRandom := rand.Intn(100)
-
-			// handle time
-			time.Sleep(time.Duration(config.handleTimeMs) * time.Millisecond)
-
-			// error rate
-			if errorRandom < config.errorRate {
-				time.Sleep(time.Duration(config.handleTimeMs) * time.Millisecond)
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal error"})
-				return
-			}
-
-			if len(config.forwardTo) == 0 {
-				logger.Info("nothing to forward")
-				c.Writer.WriteHeader(204)
-				return
-			}
-
-			var wg sync.WaitGroup
-			hasError := false
-			for _, url := range config.forwardTo {
-				wg.Add(1)
-				go func(url string) {
-					defer wg.Done()
-					req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/", url), nil)
-					httpClient := &http.Client{}
-
-					currentSpan := opentracing.SpanFromContext(c.Request.Context())
-					opentracing.GlobalTracer().Inject(
-						currentSpan.Context(),
-						opentracing.HTTPHeaders,
-						opentracing.HTTPHeadersCarrier(req.Header),
-					)
-
-					res, _ := httpClient.Do(req)
-
-					defer res.Body.Close()
-
-					if res.StatusCode >= 500 {
-						hasError = true
-					}
-				}(url)
-			}
-
-			wg.Wait()
-			if hasError {
+			// do something inside the service
+			if err := doSomething(); err != nil {
 				c.Writer.WriteHeader(http.StatusInternalServerError)
 				return
 			}
+
+			// call outside services
+			if err := callServices(c.Request.Context()); err != nil {
+				c.Writer.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
 			c.Writer.WriteHeader(204)
 		}},
 	}
+}
+
+func doSomething() error {
+	// synthetic handle time
+	time.Sleep(time.Duration(config.handleTimeMs) * time.Millisecond)
+
+	// synthetic error rate
+	rand.Seed(time.Now().UnixNano())
+	errorRandom := rand.Intn(100)
+
+	if errorRandom < config.errorRate {
+		return errors.New("error")
+	}
+
+	return nil
+}
+
+func callServices(ctx context.Context) error {
+	if len(config.forwardTo) == 0 {
+		return nil
+	}
+
+	if config.callParallel {
+		return callParallel(ctx, config.forwardTo)
+	} else {
+		return call(ctx, config.forwardTo)
+	}
+}
+
+func call(ctx context.Context, services []string) error {
+	httpClient := &http.Client{}
+	currentSpan := opentracing.SpanFromContext(ctx)
+
+	for _, serviceURL := range services {
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/", serviceURL), nil)
+
+		opentracing.GlobalTracer().Inject(
+			currentSpan.Context(),
+			opentracing.HTTPHeaders,
+			opentracing.HTTPHeadersCarrier(req.Header),
+		)
+
+		res, _ := httpClient.Do(req)
+
+		defer res.Body.Close()
+
+		if res.StatusCode >= 500 {
+			return errors.New("error")
+		}
+	}
+	return nil
+}
+
+func callParallel(ctx context.Context, services []string) error {
+	var wg sync.WaitGroup
+	hasError := false
+	for _, serviceURL := range services {
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+			req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/", url), nil)
+			httpClient := &http.Client{}
+
+			currentSpan := opentracing.SpanFromContext(ctx)
+			opentracing.GlobalTracer().Inject(
+				currentSpan.Context(),
+				opentracing.HTTPHeaders,
+				opentracing.HTTPHeadersCarrier(req.Header),
+			)
+
+			res, _ := httpClient.Do(req)
+
+			defer res.Body.Close()
+
+			if res.StatusCode >= 500 {
+				hasError = true
+			}
+		}(serviceURL)
+	}
+
+	wg.Wait()
+	if hasError {
+		return errors.New("error")
+	}
+
+	return nil
 }

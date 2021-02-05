@@ -12,6 +12,7 @@ services:
       HANDLE_TIME: 50
       ERROR_RATE: 0
       FORWARD_TO: "app2:3001,app3:3002"
+      # CALL_PARALLEL: "true"
   app2:
     build: ./app
     ports:
@@ -46,6 +47,18 @@ services:
       JAEGER_AGENT_PORT: 6831
       HANDLE_TIME: 300
       ERROR_RATE: 30
+      FORWARD_TO: "app5:3004"
+  app5:
+    build: ./app
+    ports:
+      - "3004:3004"
+    environment:
+      APP_NAME: app5
+      PORT: 3004
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      HANDLE_TIME: 150
+      ERROR_RATE: 10
 
   jaeger:
     image: jaegertracing/all-in-one:latest
