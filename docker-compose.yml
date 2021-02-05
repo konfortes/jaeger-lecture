@@ -1,0 +1,57 @@
+version: "3.9"
+services:
+  app1:
+    build: ./app
+    ports:
+      - "3000:3000"
+    environment:
+      APP_NAME: app1
+      PORT: 3000
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      HANDLE_TIME: 50
+      ERROR_RATE: 0
+      FORWARD_TO: "app2:3001,app3:3002"
+  app2:
+    build: ./app
+    ports:
+      - "3001:3001"
+    environment:
+      APP_NAME: app2
+      PORT: 3001
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      HANDLE_TIME: 100
+      ERROR_RATE: 0
+  app3:
+    build: ./app
+    ports:
+      - "3002:3002"
+    environment:
+      APP_NAME: app3
+      PORT: 3002
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      HANDLE_TIME: 150
+      ERROR_RATE: 10
+      FORWARD_TO: "app4:3003"
+  app4:
+    build: ./app
+    ports:
+      - "3003:3003"
+    environment:
+      APP_NAME: app4
+      PORT: 3003
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      HANDLE_TIME: 300
+      ERROR_RATE: 30
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "14268:14268"
+      - "14250:14250"
