@@ -11,8 +11,8 @@ services:
       JAEGER_AGENT_PORT: 6831
       HANDLE_TIME: 50
       ERROR_RATE: 0
-      FORWARD_TO: "app2:3001,app3:3002"
-      # CALL_PARALLEL: "true"
+      FORWARD_TO: "app2:3001,app3:3002,app4:3003"
+      CALL_PARALLEL: "true"
   app2:
     build: ./app
     ports:
@@ -35,7 +35,6 @@ services:
       JAEGER_AGENT_PORT: 6831
       HANDLE_TIME: 150
       ERROR_RATE: 10
-      FORWARD_TO: "app4:3003"
   app4:
     build: ./app
     ports:
